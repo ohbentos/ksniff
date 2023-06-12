@@ -1,7 +1,6 @@
 package sniffer
 
 import (
-	"fmt"
 	"io"
 	"ksniff/kube"
 	"ksniff/pkg/config"
@@ -39,9 +38,7 @@ func (u *StaticTcpdumpSnifferService) Setup() error {
 
 func (u *StaticTcpdumpSnifferService) Cleanup() error {
 	command := strings.Split("kill -2 1", " ")
-	in, err := u.kubernetesApiService.ExecuteCommand(u.settings.UserSpecifiedPodName, u.settings.UserSpecifiedContainer, command, &kube.NopWriter{})
-	fmt.Println(err)
-	fmt.Println(in)
+	_, err := u.kubernetesApiService.ExecuteCommand(u.settings.UserSpecifiedPodName, u.settings.UserSpecifiedContainer, command, &kube.NopWriter{})
 	return err
 }
 

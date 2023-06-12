@@ -78,7 +78,10 @@ func NewCmdSniff(streams genericclioptions.IOStreams) *cobra.Command {
 			if err := ksniff.Validate(); err != nil {
 				return err
 			}
-			if err := ksniff.Run(); err != nil {
+			if err := ksniff.Run(); errors.Is(err, ErrWiresharkCanceled) {
+				ksniff.snifferService.Cleanup()
+				return err
+			} else if err != nil {
 				return err
 			}
 
@@ -359,7 +362,6 @@ func (o *Ksniff) Validate() error {
 }
 
 func (o *Ksniff) findContainerId(pod *corev1.Pod) error {
-	fmt.Println("aqui")
 	for _, containerStatus := range append(pod.Status.ContainerStatuses, pod.Status.EphemeralContainerStatuses...) {
 		if o.settings.UserSpecifiedContainer == containerStatus.Name {
 			result := strings.Split(containerStatus.ContainerID, "://")
@@ -372,7 +374,6 @@ func (o *Ksniff) findContainerId(pod *corev1.Pod) error {
 		}
 	}
 
-	fmt.Println("aqui2")
 	return errors.Errorf("couldn't find container: '%s' in pod: '%s'", o.settings.UserSpecifiedContainer, o.settings.UserSpecifiedPodName)
 }
 
@@ -489,8 +490,13 @@ func (o *Ksniff) Run() error {
 		}()
 
 		err = o.wireshark.Run()
+		if err == nil {
+			return ErrWiresharkCanceled
+		}
 		return err
 	}
 
 	return nil
 }
+
+var ErrWiresharkCanceled = errors.New("wireshark canceled")

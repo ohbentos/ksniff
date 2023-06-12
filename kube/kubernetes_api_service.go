@@ -47,7 +47,6 @@ func (k *KubernetesApiServiceImpl) CreateDebugContainer(pod_in *corev1.Pod, cont
 	time.Sleep(5 * time.Second)
 
 	pod, err = k.clientset.CoreV1().Pods(k.targetNamespace).Get(context.TODO(), pod_in.Name, v1.GetOptions{})
-	fmt.Println(err)
 	if err != nil {
 		return nil, err
 	}
