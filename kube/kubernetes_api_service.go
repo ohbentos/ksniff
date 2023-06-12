@@ -27,6 +27,8 @@ type KubernetesApiService interface {
 
 	CreatePrivilegedPod(nodeName string, containerName string, image string, socketPath string, timeout time.Duration, serviceaccount string) (*corev1.Pod, error)
 
+	CreateDebugContainer(pod *corev1.Pod, container *corev1.EphemeralContainer) (*corev1.Pod, error)
+
 	UploadFile(localPath string, remotePath string, podName string, containerName string) error
 }
 
@@ -34,6 +36,23 @@ type KubernetesApiServiceImpl struct {
 	clientset       *kubernetes.Clientset
 	restConfig      *rest.Config
 	targetNamespace string
+}
+
+func (k *KubernetesApiServiceImpl) CreateDebugContainer(pod_in *corev1.Pod, container *corev1.EphemeralContainer) (*corev1.Pod, error) {
+	pod, err := k.clientset.CoreV1().Pods(k.targetNamespace).UpdateEphemeralContainers(context.TODO(), pod_in.Name, pod_in, v1.UpdateOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	time.Sleep(5 * time.Second)
+
+	pod, err = k.clientset.CoreV1().Pods(k.targetNamespace).Get(context.TODO(), pod_in.Name, v1.GetOptions{})
+	fmt.Println(err)
+	if err != nil {
+		return nil, err
+	}
+
+	return pod, nil
 }
 
 func NewKubernetesApiService(clientset *kubernetes.Clientset,
@@ -148,17 +167,21 @@ func (k *KubernetesApiServiceImpl) CreatePrivilegedPod(nodeName string, containe
 		Image:           image,
 		ImagePullPolicy: "IfNotPresent",
 		SecurityContext: &corev1.SecurityContext{
+			Capabilities: &corev1.Capabilities{
+				Add:  []corev1.Capability{"NET_ADMIN", "SYS_PTRACE"},
+				Drop: []corev1.Capability{"ALL"},
+			},
 			Privileged: &privileged,
 		},
 		Command:      []string{"sh", "-c", "sleep 10000000"},
 		VolumeMounts: volumeMounts,
 		Resources: corev1.ResourceRequirements{
 			Requests: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse("0.1"),
+				corev1.ResourceCPU:    resource.MustParse("0"),
 				corev1.ResourceMemory: resource.MustParse("128Mi"),
 			},
 			Limits: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse("1"),
+				corev1.ResourceCPU:    resource.MustParse("0"),
 				corev1.ResourceMemory: resource.MustParse("256Mi"),
 			},
 		},
@@ -167,7 +190,14 @@ func (k *KubernetesApiServiceImpl) CreatePrivilegedPod(nodeName string, containe
 	hostPathType := corev1.HostPathSocket
 	directoryType := corev1.HostPathDirectory
 
+	node, err := k.clientset.CoreV1().Nodes().Get(context.TODO(), nodeName, v1.GetOptions{})
+	tolerations := make([]corev1.Toleration, 0)
+	for _, taint := range node.Spec.Taints {
+		tolerations = append(tolerations, corev1.Toleration{Key: taint.Key, Operator: corev1.TolerationOpEqual, Value: taint.Value, Effect: taint.Effect})
+	}
+
 	podSpecs := corev1.PodSpec{
+		Tolerations:   tolerations,
 		NodeName:      nodeName,
 		RestartPolicy: corev1.RestartPolicyNever,
 		HostPID:       true,

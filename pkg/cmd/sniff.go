@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math/rand"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -263,6 +264,19 @@ func (o *Ksniff) buildTcpdumpBinaryPathLookupList() ([]string, error) {
 		filepath.Join("/usr/local/bin/", tcpdumpBinaryName), kubeKsniffPluginFolder), nil
 }
 
+func randomString(n int, alphabet []rune) string {
+	alphabetSize := len(alphabet)
+	var sb strings.Builder
+
+	for i := 0; i < n; i++ {
+		ch := alphabet[rand.Intn(alphabetSize)]
+		sb.WriteRune(ch)
+	}
+
+	s := sb.String()
+	return s
+}
+
 func (o *Ksniff) Validate() error {
 	if len(o.rawConfig.CurrentContext) == 0 {
 		return errors.New("context doesn't exist")
@@ -274,7 +288,7 @@ func (o *Ksniff) Validate() error {
 
 	var err error
 
-	if !o.settings.UserSpecifiedPrivilegedMode {
+	if !o.settings.UserSpecifiedPrivilegedMode { // not privileged mode
 		o.settings.UserSpecifiedLocalTcpdumpPath, err = findLocalTcpdumpBinaryPath()
 		if err != nil {
 			return err
@@ -305,17 +319,32 @@ func (o *Ksniff) Validate() error {
 		return errors.New("no containers in specified pod")
 	}
 
+	kubernetesApiService := kube.NewKubernetesApiService(o.clientset, o.restConfig, o.resultingContext.Namespace)
+
 	if o.settings.UserSpecifiedContainer == "" {
+		debugContainer := corev1.EphemeralContainer{
+			EphemeralContainerCommon: corev1.EphemeralContainerCommon{
+				Name:    "ksniff-debug-container-" + randomString(5, []rune("abcdefghijklmnopqrstuvwxyz123456789")),
+				Image:   "alpine",
+				Args:    []string{"-c", "trap exit SIGINT; sleep 3600"},
+				Command: []string{"/bin/sh"},
+			},
+		}
+
+		pod.Spec.EphemeralContainers = append(pod.Spec.EphemeralContainers, debugContainer)
+		pod, err = kubernetesApiService.CreateDebugContainer(pod, &debugContainer)
+		if err != nil {
+			log.WithError(err).Error("failed to create debug container")
+		}
+
 		log.Info("no container specified, taking first container we found in pod.")
-		o.settings.UserSpecifiedContainer = pod.Spec.Containers[0].Name
+		o.settings.UserSpecifiedContainer = debugContainer.Name
 		log.Infof("selected container: '%s'", o.settings.UserSpecifiedContainer)
 	}
 
 	if err := o.findContainerId(pod); err != nil {
 		return err
 	}
-
-	kubernetesApiService := kube.NewKubernetesApiService(o.clientset, o.restConfig, o.resultingContext.Namespace)
 
 	if o.settings.UserSpecifiedPrivilegedMode {
 		log.Info("sniffing method: privileged pod")
@@ -330,6 +359,7 @@ func (o *Ksniff) Validate() error {
 }
 
 func (o *Ksniff) findContainerId(pod *corev1.Pod) error {
+	fmt.Println("aqui")
 	for _, containerStatus := range append(pod.Status.ContainerStatuses, pod.Status.EphemeralContainerStatuses...) {
 		if o.settings.UserSpecifiedContainer == containerStatus.Name {
 			result := strings.Split(containerStatus.ContainerID, "://")
@@ -342,6 +372,7 @@ func (o *Ksniff) findContainerId(pod *corev1.Pod) error {
 		}
 	}
 
+	fmt.Println("aqui2")
 	return errors.Errorf("couldn't find container: '%s' in pod: '%s'", o.settings.UserSpecifiedContainer, o.settings.UserSpecifiedPodName)
 }
 
